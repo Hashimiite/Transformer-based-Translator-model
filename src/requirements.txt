@@ -1,0 +1,9 @@
+torch
+torchtext
+numpy
+typing-extensions
+sacrebleu
+transformers
+tensorflow-datasets
+tensorflow-text
+tensorflow-metal
