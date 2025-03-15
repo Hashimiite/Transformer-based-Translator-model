@@ -6,30 +6,24 @@ from train import Trainer
 from translate import Translator
 
 def load_dataset():
-    # Load English-French dataset from TensorFlow Datasets
     examples, metadata = tfds.load('wmt14_translate/fr-en', with_info=True,
                                  as_supervised=True)
     train_examples, val_examples = examples['train'], examples['validation']
     
-    # Take a large subset for better training
     train_examples = train_examples.take(60000)
     val_examples = val_examples.take(2000)
     
     return train_examples, val_examples
 
 def main():
-    # Load dataset
     train_examples, val_examples = load_dataset()
     
-    # Initialize preprocessor with larger vocab
     preprocessor = Preprocessor(max_length=50, vocab_size=16000) 
     
-    # Build vocabulary from training data
     train_src = [ex[0].numpy().decode('utf-8') for ex in train_examples]
     train_tgt = [ex[1].numpy().decode('utf-8') for ex in train_examples]
     preprocessor.build_tokenizers(train_src, train_tgt)
     
-    # Create dataset pipeline
     def prepare_data(src, tgt):
         src_tensor, tgt_tensor = tf.py_function(
             preprocessor.encode, 
@@ -44,12 +38,11 @@ def main():
     train_dataset = train_dataset.cache()
     train_dataset = train_dataset.shuffle(20000)  
     train_dataset = train_dataset.padded_batch(
-        128,  # Increased batch size
+        128,
         padded_shapes=([preprocessor.max_length], [preprocessor.max_length])
     )
     train_dataset = train_dataset.prefetch(tf.data.AUTOTUNE)
     
-    # Initialize larger model
     model = Transformer(
         num_layers=6,       
         d_model=512,      
@@ -61,7 +54,6 @@ def main():
         rate=0.1
     )
     
-    # Learning rate schedule
     class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         def __init__(self, d_model, warmup_steps=4000):
             super().__init__()
@@ -74,7 +66,7 @@ def main():
             arg2 = step * (self.warmup_steps ** -1.5)
             return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
     
-    learning_rate = CustomSchedule(512)  # matches d_model
+    learning_rate = CustomSchedule(512)
     optimizer = tf.keras.optimizers.legacy.Adam(
         learning_rate=learning_rate,
         beta_1=0.9,
@@ -83,19 +75,17 @@ def main():
     )
     trainer = Trainer(model, optimizer)
     
-    # Training loop
     print("Starting training...")
     epochs = 20 
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
         for batch, (inp, tar) in enumerate(train_dataset):
             trainer_metrics = trainer.train_step(inp, tar)
-            if batch % 50 == 0:  # More frequent updates
+            if batch % 50 == 0:
                 print(f'Batch {batch} Loss: {trainer_metrics["loss"]:.4f} '
                       f'Accuracy: {trainer_metrics["accuracy"]:.4f}')
         
-        # Test translation every epoch
-        if (epoch + 1) % 5 == 0:  # Every 5 epochs
+        if (epoch + 1) % 5 == 0:
             test_sentence = "Hello, how are you?"
             translator = Translator(model, preprocessor)
             translation = translator.translate(test_sentence)
@@ -103,10 +93,8 @@ def main():
             print(f"Input: {test_sentence}")
             print(f"Output: {translation}\n")
     
-    # Save the model
     model.save_weights('models/translation_model')
     
-    # Final test translations
     translator = Translator(model, preprocessor)
     test_sentences = [
         "Hello, how are you?",
