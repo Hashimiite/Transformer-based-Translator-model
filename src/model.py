@@ -1,33 +1,28 @@
 import tensorflow as tf
 import numpy as np
 
-# Core attention mechanism: computes attention scores between queries and keys
 def scaled_dot_product_attention(q, k, v, mask):
     matmul_qk = tf.matmul(q, k, transpose_b=True)
     
-    # Scale by square root of dimension to prevent dot products from growing too large
     dk = tf.cast(tf.shape(k)[-1], tf.float32)
     scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
     
     if mask is not None:
-        scaled_attention_logits += (mask * -1e9)  # Add large negative value to masked positions
+        scaled_attention_logits += (mask * -1e9)
     
     attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)
     output = tf.matmul(attention_weights, v)
     
     return output
 
-# Creates mask for padding tokens (zeros) to ignore them in attention calculations
 def create_padding_mask(seq):
     seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
     return seq[:, tf.newaxis, tf.newaxis, :]
 
-# Creates triangular mask to prevent attending to future tokens during training
 def create_look_ahead_mask(size):
     mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
     return mask
 
-# Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions
 class MultiHeadAttention(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads):
         super().__init__()
@@ -37,7 +32,6 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         assert d_model % num_heads == 0
         self.depth = d_model // num_heads
         
-        # Linear transformations for Q, K, V
         self.wq = tf.keras.layers.Dense(d_model)
         self.wk = tf.keras.layers.Dense(d_model)
         self.wv = tf.keras.layers.Dense(d_model)
@@ -66,7 +60,6 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         output = self.dense(concat_attention)
         return output
 
-# Adds positional information to embeddings since Transformer has no recurrence/convolution
 class PositionalEncoding(tf.keras.layers.Layer):
     def __init__(self, position, d_model):
         super().__init__()
@@ -95,7 +88,6 @@ class PositionalEncoding(tf.keras.layers.Layer):
     def call(self, inputs):
         return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
 
-# Single encoder layer with self-attention and feed-forward neural network
 class EncoderLayer(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads, dff, rate=0.1):
         super().__init__()
@@ -106,32 +98,29 @@ class EncoderLayer(tf.keras.layers.Layer):
             tf.keras.layers.Dense(d_model)
         ])
         
-        # Layer normalization for stability
         self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         
-        # Dropout for regularization
         self.dropout1 = tf.keras.layers.Dropout(rate)
         self.dropout2 = tf.keras.layers.Dropout(rate)
     
     def call(self, x, training, mask):
         attn_output = self.mha(x, x, x, mask)
         attn_output = self.dropout1(attn_output, training=training)
-        out1 = self.layernorm1(x + attn_output)  # Residual connection
+        out1 = self.layernorm1(x + attn_output)
         
         ffn_output = self.ffn(out1)
         ffn_output = self.dropout2(ffn_output, training=training)
-        out2 = self.layernorm2(out1 + ffn_output)  # Residual connection
+        out2 = self.layernorm2(out1 + ffn_output)
         
         return out2
 
-# Decoder layer includes masked self-attention and attention over encoder output
 class DecoderLayer(tf.keras.layers.Layer):
     def __init__(self, d_model, num_heads, dff, rate=0.1):
         super().__init__()
         
-        self.mha1 = MultiHeadAttention(d_model, num_heads)  # Self attention
-        self.mha2 = MultiHeadAttention(d_model, num_heads)  # Attention over encoder
+        self.mha1 = MultiHeadAttention(d_model, num_heads)
+        self.mha2 = MultiHeadAttention(d_model, num_heads)
         
         self.ffn = tf.keras.Sequential([
             tf.keras.layers.Dense(dff, activation='relu'),
@@ -147,24 +136,20 @@ class DecoderLayer(tf.keras.layers.Layer):
         self.dropout3 = tf.keras.layers.Dropout(rate)
     
     def call(self, x, enc_output, training, look_ahead_mask, padding_mask):
-        # Self attention
         attn1 = self.mha1(x, x, x, look_ahead_mask)
         attn1 = self.dropout1(attn1, training=training)
         out1 = self.layernorm1(attn1 + x)
         
-        # Attention over encoder output
         attn2 = self.mha2(enc_output, enc_output, out1, padding_mask)
         attn2 = self.dropout2(attn2, training=training)
         out2 = self.layernorm2(attn2 + out1)
         
-        # Feed forward network
         ffn_output = self.ffn(out2)
         ffn_output = self.dropout3(ffn_output, training=training)
         out3 = self.layernorm3(ffn_output + out2)
         
         return out3
 
-# Complete encoder with embedding, positional encoding, and multiple encoder layers
 class Encoder(tf.keras.layers.Layer):
     def __init__(self, num_layers, d_model, num_heads, dff,
                  input_vocab_size, maximum_position_encoding, rate=0.1):
@@ -185,18 +170,16 @@ class Encoder(tf.keras.layers.Layer):
         seq_len = tf.shape(x)[1]
         
         x = self.embedding(x)
-        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))  # Scale embeddings
+        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         x = self.pos_encoding(x)
         
         x = self.dropout(x, training=training)
         
-        # Pass through each encoder layer
         for i in range(self.num_layers):
             x = self.enc_layers[i](x, training, mask)
         
         return x
 
-# Complete decoder that processes target sequences and encoder output
 class Decoder(tf.keras.layers.Layer):
     def __init__(self, num_layers, d_model, num_heads, dff,
                  target_vocab_size, maximum_position_encoding, rate=0.1):
@@ -222,14 +205,12 @@ class Decoder(tf.keras.layers.Layer):
         
         x = self.dropout(x, training=training)
         
-        # Pass through each decoder layer
         for i in range(self.num_layers):
             x = self.dec_layers[i](x, enc_output, training,
                                  look_ahead_mask, padding_mask)
         
         return x
 
-# Complete Transformer model combining encoder, decoder, and final output layer
 class Transformer(tf.keras.Model):
     def __init__(self, num_layers, d_model, num_heads, dff,
                  input_vocab_size, target_vocab_size, max_position=40, rate=0.1):
@@ -240,13 +221,11 @@ class Transformer(tf.keras.Model):
         self.decoder = Decoder(num_layers, d_model, num_heads, dff,
                              target_vocab_size, max_position, rate)
         
-        # Final layer to convert decoder output to vocabulary distribution
         self.final_layer = tf.keras.layers.Dense(target_vocab_size)
     
     def call(self, inputs, training):
         inp, tar = inputs
         
-        # Create masks for encoder and decoder
         enc_padding_mask = create_padding_mask(inp)
         dec_padding_mask = create_padding_mask(inp)
         
@@ -254,7 +233,6 @@ class Transformer(tf.keras.Model):
         dec_target_padding_mask = create_padding_mask(tar)
         combined_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
         
-        # Forward pass through encoder and decoder
         enc_output = self.encoder(inp, training, enc_padding_mask)
         dec_output = self.decoder(tar, enc_output, training,
                                 combined_mask, dec_padding_mask)
